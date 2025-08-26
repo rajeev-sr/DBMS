@@ -1,0 +1,21 @@
+sqlite> .schema
+CREATE TABLE Students (
+    student_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    age INTEGER,
+    department TEXT
+);
+CREATE TABLE Courses (
+    course_id INTEGER PRIMARY KEY,
+    course_name TEXT NOT NULL,
+    credits INTEGER
+);
+CREATE TABLE Enrollments (
+    enroll_id INTEGER PRIMARY KEY,
+    student_id INTEGER,
+    course_id INTEGER,
+    grade TEXT,
+    FOREIGN KEY(student_id) REFERENCES Students(student_id),
+    FOREIGN KEY(course_id) REFERENCES Courses(course_id)
+);
+sqlite> 
