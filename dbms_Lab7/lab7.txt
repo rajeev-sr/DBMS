@@ -1,0 +1,165 @@
+--Q4. Simple Query: Write a SQL query to find all students majoring in ’Computer Science’
+
+SELECT * FROM Students WHERE major='Computer Science';
+
+
+--Q5. Analyze the Simple Query: Use EXPLAIN QUERY PLAN before your query from question 4. What does the output tell you about how SQLite is retrieving the data? Note down the result
+
+EXPLAIN QUERY PLAN 
+SELECT * FROM Students WHERE major='Computer Science';
+
+output : QUERY PLAN
+       --SCAN Students
+
+Explaination : SQLite performs a full table scan of Students.
+
+
+--Q6. Complex Join Query: Write a SQL query to find the first name, last name, and course name for all students enrolled in a course from the ’Humanities’ department.
+
+SELECT s.first_name, s.last_name, c.course_name
+FROM Students s
+JOIN Enrollments e ON s.student_id = e.student_id
+JOIN Courses c ON e.course_id = c.course_id
+WHERE c.department = 'Humanities';
+
+
+--Q7. Analyze the Join Query: Use EXPLAIN QUERY PLAN for the query from question 6. How many
+tables are being scanned? Note down the result.
+
+EXPLAIN QUERY PLAN 
+SELECT s.first_name, s.last_name, c.course_name
+FROM Students s
+JOIN Enrollments e ON s.student_id = e.student_id
+JOIN Courses c ON e.course_id = c.course_id
+WHERE c.department = 'Arts';
+
+output : 
+QUERY PLAN
+|--SCAN e
+|--SEARCH s USING INTEGER PRIMARY KEY (rowid=?)
+`--SEARCH c USING INTEGER PRIMARY KEY (rowid=?)
+
+Explaination : All three tables (Students, Enrollments, and Courses) are being accessed, but only Enrollments is fully scanned; the others are searched by key.
+
+--Q9. Re-analyze the Simple Query: Run EXPLAIN QUERY PLAN again for the query from question 4. What has changed in the execution plan? How does the new plan improve performance?
+
+EXPLAIN QUERY PLAN
+SELECT * FROM Students WHERE major = 'Computer Science';
+
+output : 
+`--SEARCH Students USING INDEX idx_students_major (major=?)
+
+Explaination : The execution plan now shows that SQLite is using the idx_major index to search for rows where major = 'Computer Science', which is much faster than a full table scan.
+
+--Q11. Re-analyze the Join Query: Run EXPLAIN QUERY PLAN again for the query from question 6. How has the plan changed for the Enrollments table?
+
+EXPLAIN QUERY PLAN
+SELECT s.first_name, s.last_name, c.course_name
+FROM Students s
+JOIN Enrollments e ON s.student_id = e.student_id
+JOIN Courses c ON e.course_id = c.course_id
+WHERE c.department = 'Humanities';
+
+output : 
+QUERY PLAN
+|--SCAN e
+|--SEARCH s USING INTEGER PRIMARY KEY (rowid=?)
+`--SEARCH c USING INTEGER PRIMARY KEY (rowid=?)
+
+Explaination : Query plan unchanged; planner still prefers scanning Enrollments.
+
+
+--PART3
+
+import sqlite3
+import time
+import random
+
+DB_FILE = "university.db"
+QUERY = "SELECT * FROM Students WHERE major = 'Computer Science';"
+ITERATIONS = 100
+
+con = sqlite3.connect(DB_FILE)
+cur = con.cursor()
+
+#Q12. Measure SELECT Time (Without Index)
+try:
+    cur.execute("DROP INDEX idx_major")
+    print("Index dropped.")
+except sqlite3.OperationalError:
+    print("Index did not exist.")
+
+total_time = 0
+for _ in range(ITERATIONS):
+    start_time = time.time()
+    cur.execute(QUERY).fetchall()
+    end_time = time.time()
+    total_time += (end_time - start_time)
+print(f"Avg. time without index: {total_time / ITERATIONS:.6f} seconds")
+
+#Q13. Measure SELECT Time (With Index)
+cur.execute("CREATE INDEX idx_major ON Students(major)")
+print("Index created.")
+
+total_time = 0
+for _ in range(ITERATIONS):
+    start_time = time.time()
+    cur.execute(QUERY).fetchall()
+    end_time = time.time()
+    total_time += (end_time - start_time)
+print(f"Avg. time with index: {total_time / ITERATIONS:.6f} seconds")
+
+#Q14. Measure INSERT Time (With Indexes)
+cur.execute("CREATE INDEX IF NOT EXISTS idx_enrollments_student_id ON Enrollments(student_id)")
+cur.execute("CREATE INDEX IF NOT EXISTS idx_enrollments_course_id ON Enrollments(course_id)")
+print("Foreign key indexes created.")
+
+insert_time_with_idx = 0
+for _ in range(500):
+    student_id = random.randint(1, 2000)
+    course_id = random.randint(1, 100)
+    grade = round(random.uniform(2.0, 4.0), 2)
+    start_time = time.time()
+    cur.execute("INSERT INTO Enrollments (student_id, course_id, grade) VALUES (?, ?, ?)", (student_id, course_id, grade))
+    end_time = time.time()
+    insert_time_with_idx += (end_time - start_time)
+con.commit()
+print(f"Avg. insert time with indexes: {insert_time_with_idx / 500:.6f} seconds")
+
+#Q15. Measure INSERT Time (Without Indexes)
+try:
+    cur.execute("DROP INDEX idx_enrollments_student_id")
+    cur.execute("DROP INDEX idx_enrollments_course_id")
+    print("Foreign key indexes dropped.")
+except sqlite3.OperationalError:
+    print("Indexes did not exist.")
+
+insert_time_without_idx = 0
+for _ in range(500):
+    student_id = random.randint(1, 2000)
+    course_id = random.randint(1, 100)
+    grade = round(random.uniform(2.0, 4.0), 2)
+    start_time = time.time()
+    cur.execute("INSERT INTO Enrollments (student_id, course_id, grade) VALUES (?, ?, ?)", (student_id, course_id, grade))
+    end_time = time.time()
+    insert_time_without_idx += (end_time - start_time)
+con.commit()
+print(f"Avg. insert time without indexes: {insert_time_without_idx / 500:.6f} seconds")
+
+con.close()
+
+Output:
+Index dropped.
+Avg. time without index: 0.000986 seconds
+Index created.
+Avg. time with index: 0.000983 seconds
+Foreign key indexes created.
+Avg. insert time with indexes: 0.000003 seconds
+Foreign key indexes dropped.
+Avg. insert time without indexes: 0.000001 seconds
+
+Conclusion : 
+- Indexes speed up read queries (especially for selective conditions and large data).
+- They slow down insert and update operations due to extra maintenance work.
+- Use indexes only when query patterns justify them.
+- The experiment confirms the theoretical trade-off between read and write performance.
