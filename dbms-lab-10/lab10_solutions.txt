@@ -1,0 +1,557 @@
+--QUESTION 1: Advanced SQL - Recursive CTEs for Hierarchical Data
+
+WITH RECURSIVE EmployeeHierarchy AS (
+    SELECT 
+        employee_id,
+        employee_name,
+        manager_id,
+        0 AS level,
+        CAST(employee_name AS VARCHAR(1000)) AS hierarchy_path
+    FROM employees
+    WHERE manager_id IS NULL
+    
+    UNION ALL
+    
+    SELECT 
+        e.employee_id,
+        e.employee_name,
+        e.manager_id,
+        eh.level + 1 AS level,
+        CAST(eh.hierarchy_path || ' -> ' || e.employee_name AS VARCHAR(1000)) AS hierarchy_path
+    FROM employees e
+    INNER JOIN EmployeeHierarchy eh ON e.manager_id = eh.employee_id
+)
+
+SELECT 
+    employee_id,
+    REPEAT('  ', level) || employee_name AS employee_name,
+    manager_id,
+    level,
+    hierarchy_path
+FROM EmployeeHierarchy
+ORDER BY level, employee_name;
+
+WITH RECURSIVE EmployeeHierarchy AS (
+    SELECT 
+        employee_id,
+        employee_name,
+        manager_id,
+        0 AS level
+    FROM employees
+    WHERE manager_id IS NULL
+    
+    UNION ALL
+    
+    SELECT 
+        e.employee_id,
+        e.employee_name,
+        e.manager_id,
+        eh.level + 1
+    FROM employees e
+    INNER JOIN EmployeeHierarchy eh ON e.manager_id = eh.employee_id
+)
+
+SELECT 
+    level,
+    employee_id,
+    employee_name,
+    manager_id,
+    CASE 
+        WHEN level = 0 THEN 'CEO'
+        WHEN level = 1 THEN 'Executive'
+        WHEN level = 2 THEN 'Manager'
+        ELSE 'Employee'
+    END AS position_level
+FROM EmployeeHierarchy
+ORDER BY level, employee_id;
+
+
+--QUESTION 2: Advanced SQL - Window Functions for Trend Analysis
+
+WITH DailySales AS (
+    SELECT 
+        product_id,
+        sale_date,
+        SUM(sale_amount) AS daily_total
+    FROM sales
+    GROUP BY product_id, sale_date
+),
+MovingAverageCalc AS (
+    SELECT 
+        product_id,
+        sale_date,
+        daily_total,
+        -- Calculate 7-day moving average
+        AVG(daily_total) OVER (
+            PARTITION BY product_id 
+            ORDER BY sale_date 
+            ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        ) AS moving_avg_7day,
+        -- Get previous day's sales for percentage change calculation
+        LAG(daily_total, 1) OVER (
+            PARTITION BY product_id 
+            ORDER BY sale_date
+        ) AS previous_day_sales
+    FROM DailySales
+)
+SELECT 
+    product_id,
+    sale_date,
+    daily_total AS current_day_sales,
+    ROUND(moving_avg_7day, 2) AS moving_average_7day,
+    previous_day_sales,
+    CASE 
+        WHEN previous_day_sales IS NULL THEN NULL
+        WHEN previous_day_sales = 0 THEN NULL
+        ELSE ROUND(((daily_total - previous_day_sales) / previous_day_sales) * 100, 2)
+    END AS percentage_change
+FROM MovingAverageCalc
+ORDER BY product_id, sale_date;
+
+SELECT 
+    product_id,
+    sale_date,
+    daily_total AS current_day_sales,
+    ROUND(AVG(daily_total) OVER (
+        PARTITION BY product_id 
+        ORDER BY sale_date 
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ), 2) AS moving_avg_7day,
+    LAG(daily_total, 1) OVER (
+        PARTITION BY product_id 
+        ORDER BY sale_date
+    ) AS previous_day_sales,
+    ROUND(((daily_total - LAG(daily_total, 1) OVER (
+        PARTITION BY product_id 
+        ORDER BY sale_date
+    )) / NULLIF(LAG(daily_total, 1) OVER (
+        PARTITION BY product_id 
+        ORDER BY sale_date
+    ), 0)) * 100, 2) AS pct_change,
+    CASE 
+        WHEN daily_total > LAG(daily_total, 1) OVER (
+            PARTITION BY product_id 
+            ORDER BY sale_date
+        ) THEN 'UP'
+        WHEN daily_total < LAG(daily_total, 1) OVER (
+            PARTITION BY product_id 
+            ORDER BY sale_date
+        ) THEN 'DOWN'
+        ELSE 'STABLE'
+    END AS trend
+FROM (
+    SELECT 
+        product_id,
+        sale_date,
+        SUM(sale_amount) AS daily_total
+    FROM sales
+    GROUP BY product_id, sale_date
+) DailySales
+ORDER BY product_id, sale_date;
+
+
+--QUESTION 3: Indexing - Optimizing a Complex Query
+
+--Indexing
+
+CREATE INDEX idx_orders_customer_date 
+ON orders(customer_id, order_date, product_id);
+
+Reasoning: This is a composite index on the orders table that will help with 
+the join on customer_id and the WHERE clause filtering on order_date.
+
+CREATE INDEX idx_customers_segment 
+ON customers(customer_segment, customer_id, customer_name);
+
+Reasoning: This index filters customers by segment and includes customer_id 
+and customer_name. This can act as a covering index for the customers table.
+
+CREATE INDEX idx_products_category 
+ON products(product_category, product_id, product_name);
+
+Reasoning: This index filters products by category and includes product_id 
+and product_name. This can act as a covering index for the products table.
+
+
+--COVERING INDEX CONCEPT:
+
+A covering index is an index that contains all the columns needed to satisfy a 
+query, eliminating the need for the database to access the actual table data. 
+This results in significant performance improvements because:
+
+1. All required data is available in the index itself
+2. No additional disk I/O is needed to fetch table rows
+3. The query can be answered entirely from the index
+
+APPLICATION TO THIS QUERY:
+
+The ideal covering index strategy for this query would be:
+
+1. CREATE INDEX idx_customers_covering 
+   ON customers(customer_segment, customer_id, customer_name);
+   
+   This covering index includes:
+   - customer_segment (for WHERE clause filtering)
+   - customer_id (for JOIN condition)
+   - customer_name (for SELECT clause)
+
+2. CREATE INDEX idx_products_covering 
+   ON products(product_category, product_id, product_name);
+   
+   This covering index includes:
+   - product_category (for WHERE clause filtering)
+   - product_id (for JOIN condition)
+   - product_name (for SELECT clause)
+
+3. CREATE INDEX idx_orders_covering 
+   ON orders(order_date, customer_id, product_id);
+   
+   This covering index includes:
+   - order_date (for WHERE clause and SELECT clause)
+   - customer_id (for JOIN with customers)
+   - product_id (for JOIN with products)
+
+QUERY EXECUTION WITH COVERING INDEXES:
+
+With these covering indexes, the query execution would:
+
+1. Use idx_customers_covering to filter Premium customers and retrieve all 
+   needed customer data without accessing the customers table
+   
+2. Use idx_products_covering to filter Electronics products and retrieve all 
+   needed product data without accessing the products table
+   
+3. Use idx_orders_covering to filter orders by date range and join with the 
+   filtered customers and products without accessing the orders table
+
+4. The entire query can be satisfied using only index scans, resulting in 
+   maximum performance
+
+ADDITIONAL OPTIMIZATION CONSIDERATION:
+
+For maximum performance, you might also consider:
+
+- Creating filtered/partial indexes if the database supports them:
+  CREATE INDEX idx_customers_premium 
+  ON customers(customer_id, customer_name) 
+  WHERE customer_segment = 'Premium';
+  
+  CREATE INDEX idx_products_electronics 
+  ON products(product_id, product_name) 
+  WHERE product_category = 'Electronics';
+
+- Analyzing the cardinality of the indexed columns to ensure the optimizer 
+  will use the indexes
+
+- Updating statistics regularly to help the query optimizer make better decisions
+
+
+QUESTION 4: MongoDB - Aggregation Pipeline for Data Analysis
+
+db.articles.aggregate([
+    {
+        $match: {
+            views: { $gt: 1000 }
+        }
+    },
+    
+    {
+        $unwind: "$tags"
+    },
+    
+    {
+        $addFields: {
+            comment_count: { $size: "$comments" },
+            total_likes: {
+                $sum: "$comments.likes"
+            }
+        }
+    },
+    
+    {
+        $group: {
+            _id: "$tags",
+            avg_comments: { $avg: "$comment_count" },
+            avg_likes: { $avg: "$total_likes" },
+            article_count: { $sum: 1 },
+            total_views: { $sum: "$views" }
+        }
+    },
+    
+    {
+        $sort: {
+            avg_likes: -1
+        }
+    },
+    
+    {
+        $project: {
+            _id: 0,
+            tag: "$_id",
+            avg_comments: { $round: ["$avg_comments", 2] },
+            avg_likes: { $round: ["$avg_likes", 2] },
+            article_count: 1,
+            total_views: 1
+        }
+    }
+]);
+
+
+ALTERNATIVE SOLUTION WITH MORE DETAILED ANALYTICS:
+
+db.articles.aggregate([
+    {
+        $match: {
+            views: { $gt: 1000 }
+        }
+    },
+    
+    {
+        $unwind: "$tags"
+    },
+    
+    {
+        $unwind: {
+            path: "$comments",
+            preserveNullAndEmptyArrays: true
+        }
+    },
+    
+    {
+        $group: {
+            _id: {
+                article_id: "$_id",
+                tag: "$tags"
+            },
+            comment_count: {
+                $sum: {
+                    $cond: [{ $ifNull: ["$comments", false] }, 1, 0]
+                }
+            },
+            total_likes: {
+                $sum: { $ifNull: ["$comments.likes", 0] }
+            },
+            views: { $first: "$views" }
+        }
+    },
+    
+    {
+        $group: {
+            _id: "$_id.tag",
+            avg_comments: { $avg: "$comment_count" },
+            avg_likes: { $avg: "$total_likes" },
+            article_count: { $sum: 1 },
+            total_views: { $sum: "$views" },
+            max_views: { $max: "$views" },
+            min_views: { $min: "$views" }
+        }
+    },
+    
+    {
+        $sort: {
+            avg_likes: -1
+        }
+    },
+    
+    {
+        $project: {
+            _id: 0,
+            tag: "$_id",
+            avg_comments_per_article: { $round: ["$avg_comments", 2] },
+            avg_likes_per_article: { $round: ["$avg_likes", 2] },
+            total_articles: "$article_count",
+            total_views: 1,
+            avg_views: { $round: [{ $divide: ["$total_views", "$article_count"] }, 2] },
+            max_views: 1,
+            min_views: 1
+        }
+    }
+]);
+
+
+QUESTION 5: MongoDB - Geospatial Queries
+
+CREATING A 2DSPHERE INDEX:
+
+To create a 2dsphere index on the location field:
+
+db.restaurants.createIndex({ location: "2dsphere" });
+
+EXPLANATION:
+The 2dsphere index supports queries that calculate geometries on an earth-like 
+sphere. It supports:
+- Queries for inclusion (points within a polygon)
+- Queries for intersection
+- Queries for proximity (finding nearby locations)
+
+The 2dsphere index supports data stored as:
+- GeoJSON objects (preferred)
+- Legacy coordinate pairs
+
+For optimal performance with geospatial queries, the 2dsphere index is essential 
+as it enables efficient spatial calculations and proximity searches.
+
+
+QUERY TO FIND RESTAURANTS WITHIN 5KM RADIUS:
+
+db.restaurants.find({
+    location: {
+        $near: {
+            $geometry: {
+                type: "Point",
+                coordinates: [-73.98, 40.77]  // [longitude, latitude]
+            },
+            $maxDistance: 5000  // Distance in meters (5km = 5000m)
+        }
+    }
+});
+
+
+ALTERNATIVE QUERIES WITH ADDITIONAL OPTIONS:
+
+1. Using $geoWithin with $centerSphere (returns unordered results):
+
+db.restaurants.find({
+    location: {
+        $geoWithin: {
+            $centerSphere: [
+                [-73.98, 40.77],  // [longitude, latitude]
+                5 / 6378.1  // radius in radians (5km / Earth's radius in km)
+            ]
+        }
+    }
+});
+
+
+2. Using $nearSphere with projection and limit:
+
+db.restaurants.find(
+    {
+        location: {
+            $nearSphere: {
+                $geometry: {
+                    type: "Point",
+                    coordinates: [-73.98, 40.77]
+                },
+                $maxDistance: 5000
+            }
+        }
+    },
+    {
+        name: 1,
+        location: 1,
+        _id: 0
+    }
+).limit(10);
+
+
+3. Using aggregation pipeline with $geoNear (provides distance calculation):
+
+db.restaurants.aggregate([
+    {
+        $geoNear: {
+            near: {
+                type: "Point",
+                coordinates: [-73.98, 40.77]
+            },
+            distanceField: "distance",
+            maxDistance: 5000,
+            spherical: true,
+            key: "location"
+        }
+    },
+    {
+        $project: {
+            name: 1,
+            location: 1,
+            distance_km: {
+                $divide: ["$distance", 1000]  // Convert meters to kilometers
+            }
+        }
+    },
+    {
+        $sort: {
+            distance: 1  // Sort by closest first
+        }
+    }
+]);
+
+
+COMPLETE SETUP SCRIPT FOR GEOSPATIAL QUERIES:
+
+// 1. Create the 2dsphere index
+db.restaurants.createIndex({ location: "2dsphere" });
+
+// 2. Verify the index was created
+db.restaurants.getIndexes();
+
+// 3. Example: Insert sample restaurant data
+db.restaurants.insertMany([
+    {
+        name: "Pizza Palace",
+        location: {
+            type: "Point",
+            coordinates: [-73.97, 40.76]
+        },
+        cuisine: "Italian"
+    },
+    {
+        name: "Sushi House",
+        location: {
+            type: "Point",
+            coordinates: [-73.99, 40.78]
+        },
+        cuisine: "Japanese"
+    },
+    {
+        name: "Burger Joint",
+        location: {
+            type: "Point",
+            coordinates: [-73.98, 40.77]
+        },
+        cuisine: "American"
+    }
+]);
+
+// 4. Find restaurants within 5km
+db.restaurants.find({
+    location: {
+        $near: {
+            $geometry: {
+                type: "Point",
+                coordinates: [-73.98, 40.77]
+            },
+            $maxDistance: 5000
+        }
+    }
+});
+
+// 5. Find with distance information using aggregation
+db.restaurants.aggregate([
+    {
+        $geoNear: {
+            near: {
+                type: "Point",
+                coordinates: [-73.98, 40.77]
+            },
+            distanceField: "distance_meters",
+            maxDistance: 5000,
+            spherical: true
+        }
+    },
+    {
+        $addFields: {
+            distance_km: {
+                $round: [{ $divide: ["$distance_meters", 1000] }, 2]
+            }
+        }
+    },
+    {
+        $project: {
+            name: 1,
+            cuisine: 1,
+            distance_km: 1,
+            coordinates: "$location.coordinates"
+        }
+    }
+]);
